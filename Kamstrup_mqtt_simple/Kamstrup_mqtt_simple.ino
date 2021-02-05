@@ -3,7 +3,7 @@
 #include "gcm.h"
 #include "mbusparser.h"
 
-#define DEBUG_BEGIN Serial.begin(115200);
+#define DEBUG_BEGIN Serial.begin(2400);
 #define DEBUG_PRINT(x) Serial.print(x);sendmsg(String(mqtt_topic)+"/status",x);
 #define DEBUG_PRINTLN(x) Serial.println(x);sendmsg(String(mqtt_topic)+"/status",x);
 
@@ -33,7 +33,7 @@ PubSubClient client(espClient);
 void setup() {
   DEBUG_BEGIN
   DEBUG_PRINTLN("")
-  //Serial.begin(115200);
+  WiFi.hostname("kamstrup");
 
   WiFi.begin(ssid, password);
 
@@ -62,7 +62,6 @@ void setup() {
   }
 
   Serial.begin(2400, SERIAL_8N1);
-  Serial.swap();
   hexStr2bArr(encryption_key, conf_key, sizeof(encryption_key));
   hexStr2bArr(authentication_key, conf_authkey, sizeof(authentication_key));
   Serial.println("Setup completed");
@@ -72,6 +71,7 @@ void setup() {
 void loop() {
   while (Serial.available() > 0) {
     //for(int i=0;i<sizeof(input);i++){
+    sendmsg(String(mqtt_topic)+"/status","Serial data available");
     if (streamParser.pushData(Serial.read())) {
       //  if (streamParser.pushData(input[i])) {
       VectorView frame = streamParser.getFrame();
