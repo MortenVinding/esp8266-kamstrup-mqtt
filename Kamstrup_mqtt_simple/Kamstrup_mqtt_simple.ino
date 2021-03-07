@@ -87,6 +87,10 @@ void loop() {
       }
     }
   }
+  // Sleep for 200ms to conserve power.
+  // This might still work up to 479ms sine the UART buffer is 128 bytes and
+  // baud rate is 2400,8,n,1
+  delay(200);
   client.loop();
 }
 
@@ -233,9 +237,15 @@ void hexStr2bArr(uint8_t* dest, const char* source, int bytes_n)
   }
 }
 
-
+// shamelessly stolen from NielsOerbaek
 void sendmsg(String topic, String payload) {
-  if (client.connected()) {
-    client.publish(topic.c_str(), payload.c_str());    
+  if (client.connected() && WiFi.status() == WL_CONNECTED) {
+    // If we are connected to WiFi and MQTT, send.
+    client.publish(topic.c_str(), payload.c_str());
+    delay(10);
+  } else {
+    // Otherwise, restart the chip, hoping that the issue resolved itself.
+    delay(1000);
+    ESP.restart();
   }
 }
