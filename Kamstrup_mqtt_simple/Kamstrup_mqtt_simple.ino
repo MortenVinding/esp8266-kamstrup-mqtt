@@ -4,9 +4,11 @@
 #include "mbusparser.h"
 #include "secrets.h"
 
-#define DEBUG_BEGIN Serial.begin(115200);
-#define DEBUG_PRINT(x) Serial.print(x);sendmsg(String(mqtt_topic)+"/status",x);
-#define DEBUG_PRINTLN(x) Serial.println(x);sendmsg(String(mqtt_topic)+"/status",x);
+#define DEBUG_BEGIN Serial.begin(2400);
+#define DEBUG_PRINT(x) Serial.print(x);// sendmsg(String(mqtt_topic)+"/status",x);
+#define DEBUG_PRINTLN(x) Serial.println(x);// sendmsg(String(mqtt_topic)+"/status",x);
+unsigned long UpTime;
+unsigned long lastUpdate;
 
 const size_t headersize = 11;
 const size_t footersize = 3;
@@ -17,55 +19,40 @@ uint8_t decryptedFrameBuffer[500];
 VectorView decryptedFrame(decryptedFrameBuffer, 0);
 MbusStreamParser streamParser(receiveBuffer, sizeof(receiveBuffer));
 mbedtls_gcm_context m_ctx;
+ADC_MODE(ADC_VCC);  // allows you to monitor the internal VCC level; it varies with WiFi load
+// don't connect anything to the analog input pin(s)!
 
 WiFiClient espClient;
 PubSubClient client(espClient);
 
+void preinit() {
+  ESP8266WiFiClass::preinitWiFiOff();
+}
+
 void setup() {
-  //DEBUG_BEGIN
-  //DEBUG_PRINTLN("")
-  Serial.begin(115200);
-  Serial.println(" I can print something");
-
-  
-
-  WiFi.begin(ssid, password);
-
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.println("Connecting to WiFi..");
-  }
-  Serial.println("Connected to the WiFi network");
-
-  client.setServer(mqttServer, mqttPort);
-  
-  while (!client.connected()) {
-    Serial.println("Connecting to MQTT...");
-
-    if (client.connect(mqttClientID, mqttUser, mqttPassword )) {
-
-      Serial.println("connected");
-
-    } else {
-
-      Serial.print("failed with state ");
-      Serial.print(client.state());
-      delay(2000);
-
-    }
-  }
-
-  Serial.begin(2400, SERIAL_8N1);
-  Serial.swap();
+  DEBUG_BEGIN
+  DEBUG_PRINTLN("")
+  setupWiFi();
+  setupMQTT();
   hexStr2bArr(encryption_key, conf_key, sizeof(encryption_key));
   hexStr2bArr(authentication_key, conf_authkey, sizeof(authentication_key));
+  delay(500);
   Serial.println("Setup completed");
-
+  delay(100);
+  Serial.print(F("\nReset reason = "));
+  String resetCause = ESP.getResetReason();
+  sendmsg(String(mqtt_topic) + "/system/resetreason", String((resetCause)));
+  // retained, NOT WORKING
+  // sendmsg(String(mqtt_topic) + "/system/resetreason", String(resetCause),true);
+  Serial.println(resetCause);
+  UpTime = millis();
+  Serial.print("Uptime: ");
+  Serial.println(UpTime / 1000);
+  sendmsg(String(mqtt_topic) + "/system/uptime", String(UpTime / 1000));
 }
 
 void loop() {
   while (Serial.available() > 0) {
-    //for(int i=0;i<sizeof(input);i++){
     if (streamParser.pushData(Serial.read())) {
       //  if (streamParser.pushData(input[i])) {
       VectorView frame = streamParser.getFrame();
@@ -81,9 +68,52 @@ void loop() {
       }
     }
   }
+  // Public uptime every 30 secs
+  if ( millis() - lastUpdate > 30000) {
+    lastUpdate = millis();   
+    UpTime = millis();
+    Serial.print("Uptime: ");
+    Serial.println(UpTime / 1000);
+    sendmsg(String(mqtt_topic) + "/system/uptime", String(UpTime / 1000));
+    float volts = ESP.getVcc();
+    sendmsg(String(mqtt_topic) + "/system/volts", String(volts / 1000));
+  }
+  // Sleep for 200ms to conserve power.
+  // This might still work up to 479ms sine the UART buffer is 128 bytes and
+  // baud rate is 2400,8,n,1
+  delay(200);
   client.loop();
 }
 
+void setupWiFi() {
+  WiFi.hostname("kamstrup");
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.println("Connecting to WiFi..");
+  }
+  Serial.println("Connected to the WiFi network");
+  //wifi_set_sleep_type(LIGHT_SLEEP_T);
+  delay(500);
+}
+
+void setupMQTT() {
+  client.setServer(mqttServer, mqttPort);  
+  while (!client.connected()) {
+    Serial.println("Connecting to MQTT...");
+    if (client.connect("Kamstrup", mqttUser, mqttPassword )) {
+      delay(10);
+      Serial.println("connected");
+    } else if (WiFi.status() != WL_CONNECTED) {
+      // WiFi disconnected. Reconnecting...
+      setupWiFi();
+    } else {
+      Serial.print("failed with state ");
+      Serial.print(client.state());
+      delay(2000);
+    }
+  }
+}
 
 void sendData(MeterData md) {
   if (md.activePowerPlusValid)
@@ -151,6 +181,7 @@ void sendData(MeterData md) {
     sendmsg(String(mqtt_topic) + "/energy/reactiveImportKWh", String(md.reactiveImportWh / 1000.));
   if (md.reactiveExportWhValid)
     sendmsg(String(mqtt_topic) + "/energy/reactiveExportKWh", String(md.reactiveExportWh / 1000.));
+  delay(10);
 }
 
 void printHex(const unsigned char* data, const size_t length) {
@@ -227,15 +258,26 @@ void hexStr2bArr(uint8_t* dest, const char* source, int bytes_n)
   }
 }
 
-
+// shamelessly stolen from NielsOerbaek
 void sendmsg(String topic, String payload) {
-  if (client.connected() && WiFi.status() == WL_CONNECTED) {
-    // If we are connected to WiFi and MQTT, send. (From Niels Ørbæk)
-    client.publish(topic.c_str(), payload.c_str());
-    delay(10);
-  } else {
-    // Otherwise, restart the chip, hoping that the issue resolved itself.
-    delay(60*1000);
+  if (WiFi.status() != WL_CONNECTED) {
+    // WiFi not connected, restart the chip, hoping that the issue resolved itself.
+    Serial.println("Lost WiFi connection, restarting...");
+    delay(1000);
     ESP.restart();
   }
+  if (!client.connected()) {
+    // Lost MQTT connection. Reestablishing.
+    Serial.println("Lost MQTT connection, restarting...");
+    Serial.print("MQTT Status: ");
+    Serial.println(client.connected());
+    Serial.print("WiFi Status: ");
+    Serial.println(WiFi.status());
+    Serial.print("MQTT state: ");
+    Serial.print(client.state());
+    setupMQTT();
+  }
+  // If we are connected to WiFi and MQTT, send.
+  client.publish(topic.c_str(), payload.c_str());
+  delay(100);
 }
