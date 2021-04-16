@@ -2,20 +2,11 @@
 #include <PubSubClient.h>
 #include "gcm.h"
 #include "mbusparser.h"
+#include "secrets.h"
 
-#define DEBUG_BEGIN Serial.begin(2400);
+#define DEBUG_BEGIN Serial.begin(115200);
 #define DEBUG_PRINT(x) Serial.print(x);sendmsg(String(mqtt_topic)+"/status",x);
 #define DEBUG_PRINTLN(x) Serial.println(x);sendmsg(String(mqtt_topic)+"/status",x);
-
-const char* ssid = "******";
-const char* password =  "******";
-const char* mqttServer = "******";
-const int mqttPort = 1883;
-const char* mqttUser = "******";
-const char* mqttPassword = "******";
-char mqtt_topic[40] = "kamstrup";
-char conf_key[33] = "******";
-char conf_authkey[33] = "******";
 
 const size_t headersize = 11;
 const size_t footersize = 3;
@@ -31,9 +22,12 @@ WiFiClient espClient;
 PubSubClient client(espClient);
 
 void setup() {
-  DEBUG_BEGIN
-  DEBUG_PRINTLN("")
-  WiFi.hostname("kamstrup");
+  //DEBUG_BEGIN
+  //DEBUG_PRINTLN("")
+  Serial.begin(115200);
+  Serial.println(" I can print something");
+
+  
 
   WiFi.begin(ssid, password);
 
@@ -48,7 +42,7 @@ void setup() {
   while (!client.connected()) {
     Serial.println("Connecting to MQTT...");
 
-    if (client.connect("ESP8266Client", mqttUser, mqttPassword )) {
+    if (client.connect(mqttClientID, mqttUser, mqttPassword )) {
 
       Serial.println("connected");
 
@@ -62,6 +56,7 @@ void setup() {
   }
 
   Serial.begin(2400, SERIAL_8N1);
+  Serial.swap();
   hexStr2bArr(encryption_key, conf_key, sizeof(encryption_key));
   hexStr2bArr(authentication_key, conf_authkey, sizeof(authentication_key));
   Serial.println("Setup completed");
@@ -71,7 +66,6 @@ void setup() {
 void loop() {
   while (Serial.available() > 0) {
     //for(int i=0;i<sizeof(input);i++){
-    sendmsg(String(mqtt_topic)+"/status","Serial data available");
     if (streamParser.pushData(Serial.read())) {
       //  if (streamParser.pushData(input[i])) {
       VectorView frame = streamParser.getFrame();
@@ -87,10 +81,6 @@ void loop() {
       }
     }
   }
-  // Sleep for 200ms to conserve power.
-  // This might still work up to 479ms sine the UART buffer is 128 bytes and
-  // baud rate is 2400,8,n,1
-  delay(200);
   client.loop();
 }
 
@@ -237,15 +227,15 @@ void hexStr2bArr(uint8_t* dest, const char* source, int bytes_n)
   }
 }
 
-// shamelessly stolen from NielsOerbaek
+
 void sendmsg(String topic, String payload) {
   if (client.connected() && WiFi.status() == WL_CONNECTED) {
-    // If we are connected to WiFi and MQTT, send.
+    // If we are connected to WiFi and MQTT, send. (From Niels Ørbæk)
     client.publish(topic.c_str(), payload.c_str());
     delay(10);
   } else {
     // Otherwise, restart the chip, hoping that the issue resolved itself.
-    delay(1000);
+    delay(60*1000);
     ESP.restart();
   }
 }
