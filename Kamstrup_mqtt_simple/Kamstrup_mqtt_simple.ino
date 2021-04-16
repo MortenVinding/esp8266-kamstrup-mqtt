@@ -101,7 +101,7 @@ void setupMQTT() {
   client.setServer(mqttServer, mqttPort);  
   while (!client.connected()) {
     Serial.println("Connecting to MQTT...");
-    if (client.connect("Kamstrup", mqttUser, mqttPassword )) {
+    if (client.connect(mqttClientID, mqttUser, mqttPassword )) {
       delay(10);
       Serial.println("connected");
     } else if (WiFi.status() != WL_CONNECTED) {
